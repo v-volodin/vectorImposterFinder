@@ -2,12 +2,12 @@ VectorImposterFinder will inspect whether your image set has a raster image insi
 
 # Installation
 
-```ruby
+```
 bundle install
 ```
 
 # Usage
 
-```ruby
+```
 ruby find_vector_imposter.rb [folder_path]
 ```
