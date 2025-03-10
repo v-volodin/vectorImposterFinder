@@ -1,10 +1,11 @@
 #!/usr/bin/env ruby
-# coding: utf-8
+# frozen_string_literal: true
 
 # This script finds svg and pdf files containing raster images.
 
 require 'pdf/reader'
 require 'rexml/document'
+require 'parallel'
 
 module FindVectorImposter
   class PDFInspector
@@ -24,6 +25,24 @@ module FindVectorImposter
         end
         false
       end
+    rescue PDF::Reader::MalformedPDFError, PDF::Reader::UnsupportedFeatureError => e
+      puts "Error reading #{file}: #{e.message}"
+      false
+    end
+
+    def process_page(form_xobject)
+      xobjects = form_xobject.xobjects
+      return false if xobjects.nil? || xobjects.empty?
+
+      xobjects.each do |_name, stream|
+        case stream.hash[:Subtype]
+        when :Image
+          return true
+        when :Form
+          return process_page(PDF::Reader::FormXObject.new(form_xobject.page, stream))
+        end
+      end
+      false
     end
   end
 
@@ -36,6 +55,24 @@ module FindVectorImposter
         return true if href
       end
       false
+    end
+  end
+
+  class Finder
+    def process_files(files, inspector, file_type, threads)
+      return puts "There are no #{file_type.upcase} files in the specified folder." if files.empty?
+
+      vector_imposters_found = 0
+      mutex = Mutex.new
+
+      puts "Checking #{file_type} files..."
+      Parallel.each(files, in_threads: threads) do |file|
+        if inspector.does_contain_raster(file)
+          puts File.basename(file)
+          mutex.synchronize { vector_imposters_found += 1 }
+        end
+      end
+      puts "#{vector_imposters_found} vector imposters in #{file_type} files found"
     end
   end
 end
@@ -56,33 +93,9 @@ pdf_inspector = FindVectorImposter::PDFInspector.new
 svg_inspector = FindVectorImposter::SVGInspector.new
 pdf_files = Dir.glob(File.join(folder_path, '**', '*.pdf'))
 svg_files = Dir.glob(File.join(folder_path, '**', '*.svg'))
-vector_imposters_in_svg_found = 0
-vector_imposters_in_pdf_found = 0
 
 puts 'Checking pdf files...'
 
-if pdf_files.empty?
-  puts 'There are no PDF files in the specified folder.'
-else
-  pdf_files.each do |file|
-    if pdf_inspector.does_contain_raster(file)
-      puts "#{File.basename(file)}"
-      vector_imposters_in_pdf_found += 1
-    end
-  end
-  puts "#{vector_imposters_in_pdf_found} vector imposters in pdf files found"
-end
-
-puts 'Checking svg files...'
-
-if svg_files.empty?
-  puts 'There are no SVG files in the specified folder.'
-else
-  svg_files.each do |file|
-    if svg_inspector.does_contain_raster(file)
-      puts "#{File.basename(file)}"
-      vector_imposters_in_svg_found += 1
-    end
-  end
-  puts "#{vector_imposters_in_svg_found} vector imposters in svg files found"
-end
+finder = FindVectorImposter::Finder.new
+finder.process_files(pdf_files, pdf_inspector, 'pdf', 4)
+finder.process_files(svg_files, svg_inspector, 'svg', 4)
